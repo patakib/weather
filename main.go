@@ -15,55 +15,16 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"gopkg.in/yaml.v3"
+
+	t "weather/types"
 )
 
-type Config struct {
-	Cities       []ConfigCity `yaml:"cities"`
-	Parameters   []string     `yaml:"parameters"`
-	ForecastDays int8         `yaml:"forecast_days"`
-}
-type ConfigCity struct {
-	Name        string    `yaml:"name"`
-	Coordinates []float64 `yaml:"coordinates"`
-}
-
-type EmailData struct {
-	Temperature   map[int]float32
-	Precipitation map[int][]float32
-	WeatherCode   map[int]string
-	Sunrise       string
-	Sunset        string
-}
-
-type Response struct {
-	Hourly HourlyWeather `json:"hourly"`
-	Daily  DailyWeather  `json:"daily"`
-	City   string
-}
-type DailyWeather struct {
-	Time    []string `json:"time"`
-	Sunrise []string `json:"sunrise"`
-	Sunset  []string `json:"sunset"`
-}
-type HourlyWeather struct {
-	Time          []string  `json:"time"`
-	Temp_2m       []float32 `json:"temperature_2m"`
-	PrecProb      []int8    `json:"precipitation_probability"`
-	Prec          []float32 `json:"precipitation"`
-	Rain          []float32 `json:"rain"`
-	Snow          []float32 `json:"snowfall"`
-	CloudCover    []int8    `json:"cloudcover"`
-	Windspeed_10m []float32 `json:"windspeed_10m"`
-	Winddir_10m   []int8    `json:"winddirection_10m"`
-	WeatherCode   []int8    `json:"weathercode"`
-}
-
-func readConfig(file string) (Config, error) {
+func readConfig(file string) (t.Config, error) {
 	f, err := os.ReadFile(file)
 	if err != nil {
 		log.Fatal(err)
 	}
-	var config Config
+	var config t.Config
 	err = yaml.Unmarshal(f, &config)
 	if err != nil {
 		log.Fatal(err)
@@ -71,7 +32,7 @@ func readConfig(file string) (Config, error) {
 	return config, err
 }
 
-func getMeteoData(coordinates []float64, parameters []string, forecastDays int8) (Response, error) {
+func getMeteoData(coordinates []float64, parameters []string, forecastDays int8) (t.Response, error) {
 	urlStart := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%v&longitude=%v&hourly=", coordinates[0], coordinates[1])
 	urlEnd := fmt.Sprintf("&daily=sunrise,sunset&timezone=auto&forecast_days=%v", forecastDays)
 	urlMiddlePart := ""
@@ -92,12 +53,12 @@ func getMeteoData(coordinates []float64, parameters []string, forecastDays int8)
 	if err != nil {
 		log.Fatal(err)
 	}
-	var responseObject Response
+	var responseObject t.Response
 	json.Unmarshal(responseData, &responseObject)
 	return responseObject, err
 }
 
-func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass, city string) {
+func writeDataToDb(response t.Response, pgPort, pgHost, pgDatabase, pgUser, pgPass, city string) {
 	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", pgHost, pgPort, pgUser, pgPass, pgDatabase)
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
@@ -203,8 +164,8 @@ func sortedKeys[V any](m map[int]V) []int {
 	return keys
 }
 
-func createEmailData(response Response) EmailData {
-	var emailData EmailData
+func createEmailData(response t.Response) t.EmailData {
+	var emailData t.EmailData
 	emailData.Temperature = make(map[int]float32)
 	emailData.Precipitation = make(map[int][]float32)
 	emailData.WeatherCode = make(map[int]string)
@@ -226,7 +187,7 @@ func createEmailData(response Response) EmailData {
 	return emailData
 }
 
-func writeEmail(emailData EmailData, city, user, sender, pass, receiver, host, port string) {
+func writeEmail(emailData t.EmailData, city, user, sender, pass, receiver, host, port string) {
 	toAddresses := []string{sender}
 	hostAndPort := fmt.Sprintf("%s"+":"+"%s", host, port)
 	tempString := ""
@@ -239,10 +200,14 @@ func writeEmail(emailData EmailData, city, user, sender, pass, receiver, host, p
 		tempString = tempString + fmt.Sprintf("%v ora - %v fok\n", indexTemp, emailData.Temperature[indexTemp])
 	}
 	for indexPrec, _ := range sortedPrec {
-		precString = precString + fmt.Sprintf("%v ora - %v mm - %v valoszinuseg\n", indexPrec, emailData.Precipitation[indexPrec][0], emailData.Precipitation[indexPrec][1])
+		if len(emailData.Precipitation[indexPrec]) > 0 {
+			precString = precString + fmt.Sprintf("%v ora - %v mm - %v valoszinuseg\n", indexPrec, emailData.Precipitation[indexPrec][0], emailData.Precipitation[indexPrec][1])
+		}
 	}
 	for indexWeatherCode, _ := range sortedWeatherCode {
-		weatherCodeString = weatherCodeString + fmt.Sprintf("%v ora - %v\n", indexWeatherCode, emailData.WeatherCode[indexWeatherCode])
+		if len(emailData.WeatherCode) > 0 {
+			weatherCodeString = weatherCodeString + fmt.Sprintf("%v ora - %v\n", indexWeatherCode, emailData.WeatherCode[indexWeatherCode])
+		}
 	}
 	msgString := fmt.Sprintf(
 		"From: %s\r\n"+
@@ -296,7 +261,7 @@ func main() {
 			log.Fatal(err)
 		}
 		writeDataToDb(res, db_port, db_host, db_database, db_user, db_pass, city.Name)
-		if city.Name == "Sopron" || city.Name == "Ravazd" {
+		if city.Email == true {
 			emailData := createEmailData(res)
 			writeEmail(emailData, city.Name, email_user, email_sender, email_sender_pass, receiver, smtp_host, smtp_port)
 		}
