@@ -7,7 +7,10 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"net/smtp"
 	"os"
+	"sort"
+	"time"
 
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
@@ -22,6 +25,14 @@ type Config struct {
 type ConfigCity struct {
 	Name        string    `yaml:"name"`
 	Coordinates []float64 `yaml:"coordinates"`
+}
+
+type EmailData struct {
+	Temperature   map[int]float32
+	Precipitation map[int][]float32
+	WeatherCode   map[int]string
+	Sunrise       string
+	Sunset        string
 }
 
 type Response struct {
@@ -183,6 +194,81 @@ func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass
 	fmt.Println("Data has been successfully written to Database.")
 }
 
+func sortedKeys[V any](m map[int]V) []int {
+	keys := make([]int, 0)
+	for k, _ := range m {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	return keys
+}
+
+func createEmailData(response Response) EmailData {
+	var emailData EmailData
+	emailData.Temperature = make(map[int]float32)
+	emailData.Precipitation = make(map[int][]float32)
+	emailData.WeatherCode = make(map[int]string)
+	for index, _ := range response.Hourly.Time[:24] {
+		actualTime, err := time.Parse("2006-01-02T15:04", response.Hourly.Time[index])
+		if err != nil {
+			panic(err)
+		}
+		actualHour := actualTime.Hour()
+		emailData.Temperature[actualHour] = response.Hourly.Temp_2m[index]
+		if response.Hourly.Prec[index] > 0 {
+			emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], response.Hourly.Prec[index])
+			emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], float32(response.Hourly.PrecProb[index]))
+		}
+		if response.Hourly.WeatherCode[index] == 95 || response.Hourly.WeatherCode[index] == 96 || response.Hourly.WeatherCode[index] == 99 {
+			emailData.WeatherCode[actualHour] = "VIHAR VÁRHATÓ!"
+		}
+	}
+	return emailData
+}
+
+func writeEmail(emailData EmailData, city, user, sender, pass, receiver, host, port string) {
+	toAddresses := []string{sender}
+	hostAndPort := fmt.Sprintf("%s"+":"+"%s", host, port)
+	tempString := ""
+	precString := ""
+	weatherCodeString := ""
+	sortedTemp := sortedKeys(emailData.Temperature)
+	sortedPrec := sortedKeys(emailData.Precipitation)
+	sortedWeatherCode := sortedKeys(emailData.WeatherCode)
+	for indexTemp, _ := range sortedTemp {
+		tempString = tempString + fmt.Sprintf("%v ora - %v fok\n", indexTemp, emailData.Temperature[indexTemp])
+	}
+	for indexPrec, _ := range sortedPrec {
+		precString = precString + fmt.Sprintf("%v ora - %v mm - %v valoszinuseg\n", indexPrec, emailData.Precipitation[indexPrec][0], emailData.Precipitation[indexPrec][1])
+	}
+	for indexWeatherCode, _ := range sortedWeatherCode {
+		weatherCodeString = weatherCodeString + fmt.Sprintf("%v ora - %v\n", indexWeatherCode, emailData.WeatherCode[indexWeatherCode])
+	}
+	msgString := fmt.Sprintf(
+		"From: %s\r\n"+
+			"To: %s\r\n"+
+			"Subject: Mai idojaras - %s\r\n\r\n"+
+			"Homerseklet:\n"+
+			"%s\n"+
+			"%s\n"+
+			"%s\n"+
+			"\r\n",
+		sender,
+		sender,
+		city,
+		tempString,
+		precString,
+		weatherCodeString,
+	)
+	msg := []byte(msgString)
+	auth := smtp.PlainAuth("", user, pass, host)
+	err := smtp.SendMail(hostAndPort, auth, sender, toAddresses, msg)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println("Email sent successfully.")
+}
+
 func main() {
 	config, err := readConfig("config.yaml")
 	if err != nil {
@@ -197,13 +283,23 @@ func main() {
 	db_host := os.Getenv("POSTGRES_HOST")
 	db_port := os.Getenv("POSTGRES_PORT")
 	db_database := os.Getenv("POSTGRES_DB")
+	email_user := os.Getenv("EMAIL_USER")
+	email_sender := os.Getenv("EMAIL_SENDER")
+	email_sender_pass := os.Getenv("EMAIL_SENDER_PASS")
+	receiver := os.Getenv("RECEIVER")
+	smtp_host := os.Getenv("SMTP_HOST")
+	smtp_port := os.Getenv("SMTP_PORT")
+
 	for i, city := range config.Cities {
 		res, err := getMeteoData(config.Cities[i].Coordinates, config.Parameters, config.ForecastDays)
 		if err != nil {
 			log.Fatal(err)
 		}
 		writeDataToDb(res, db_port, db_host, db_database, db_user, db_pass, city.Name)
-
+		if city.Name == "Sopron" || city.Name == "Ravazd" {
+			emailData := createEmailData(res)
+			writeEmail(emailData, city.Name, email_user, email_sender, email_sender_pass, receiver, smtp_host, smtp_port)
+		}
 	}
 
 }
