@@ -1,0 +1,26 @@
+version: '3'
+
+volumes:
+  local_weather_pgdata:
+
+services:
+  # app:
+  #   build: 
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   command: ["./weatherapp"]
+  postgres:
+    image: postgres:latest
+    restart: always
+    environment: 
+        - POSTGRES_USER=${POSTGRES_USER}
+        - POSTGRES_PASSWORD=${POSTGRES_PASS}
+        - POSTGRES_DB=${POSTGRES_DB}  
+    ports: 
+        - "${POSTGRES_PORT}:5432"
+    volumes: 
+        - ./local_weather_pgdata:/var/lib/postgresql/data 
+
+# networks:
+#   default:
+#     name: weatherNet

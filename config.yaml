@@ -11,3 +11,13 @@ cities:
     coordinates: [46.9619, 17.8719]
   - name: Vienna
     coordinates: [48.2085, 16.3721]
+parameters:
+  - temperature_2m
+  - precipitation_probability
+  - precipitation
+  - rain
+  - snowfall
+  - cloudcover
+  - windspeed_10m
+  - winddirection_10m
+forecast_days: 16
