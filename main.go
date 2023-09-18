@@ -10,6 +10,7 @@ import (
 	"net/smtp"
 	"os"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/joho/godotenv"
@@ -20,6 +21,7 @@ import (
 )
 
 func readConfig(file string) (t.Config, error) {
+	// read config file and returns the config
 	f, err := os.ReadFile(file)
 	if err != nil {
 		log.Fatal(err)
@@ -33,6 +35,7 @@ func readConfig(file string) (t.Config, error) {
 }
 
 func getMeteoData(coordinates []float64, parameters []string, forecastDays int8) (t.Response, error) {
+	// call open-meteo api - based on config -, and returns a response struct
 	urlStart := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%v&longitude=%v&hourly=", coordinates[0], coordinates[1])
 	urlEnd := fmt.Sprintf("&daily=sunrise,sunset&timezone=auto&forecast_days=%v", forecastDays)
 	urlMiddlePart := ""
@@ -59,6 +62,7 @@ func getMeteoData(coordinates []float64, parameters []string, forecastDays int8)
 }
 
 func writeDataToDb(response t.Response, pgPort, pgHost, pgDatabase, pgUser, pgPass, city string) {
+	//connects to database and insert data from response struct into db
 	psqlInfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", pgHost, pgPort, pgUser, pgPass, pgDatabase)
 	db, err := sql.Open("postgres", psqlInfo)
 	if err != nil {
@@ -156,6 +160,7 @@ func writeDataToDb(response t.Response, pgPort, pgHost, pgDatabase, pgUser, pgPa
 }
 
 func sortedKeys[V any](m map[int]V) []int {
+	//sort keys of a map (with any value type)
 	keys := make([]int, 0)
 	for k, _ := range m {
 		keys = append(keys, k)
@@ -165,6 +170,7 @@ func sortedKeys[V any](m map[int]V) []int {
 }
 
 func createEmailData(response t.Response) t.EmailData {
+	//create email data struct from response struct
 	var emailData t.EmailData
 	emailData.Temperature = make(map[int]float32)
 	emailData.Precipitation = make(map[int][]float32)
@@ -213,9 +219,11 @@ func writeEmail(emailData t.EmailData, city, user, sender, pass, receiver, host,
 		"From: %s\r\n"+
 			"To: %s\r\n"+
 			"Subject: Mai idojaras - %s\r\n\r\n"+
-			"Homerseklet:\n"+
+			"Homerseklet:\n-----------------\n"+
 			"%s\n"+
+			"Csapadek:\n-----------------\n"+
 			"%s\n"+
+			"Viharelorejelzes:\n-------------------\n"+
 			"%s\n"+
 			"\r\n",
 		sender,
@@ -255,16 +263,21 @@ func main() {
 	smtp_host := os.Getenv("SMTP_HOST")
 	smtp_port := os.Getenv("SMTP_PORT")
 
+	var wg sync.WaitGroup
 	for i, city := range config.Cities {
-		res, err := getMeteoData(config.Cities[i].Coordinates, config.Parameters, config.ForecastDays)
-		if err != nil {
-			log.Fatal(err)
-		}
-		writeDataToDb(res, db_port, db_host, db_database, db_user, db_pass, city.Name)
-		if city.Email == true {
-			emailData := createEmailData(res)
-			writeEmail(emailData, city.Name, email_user, email_sender, email_sender_pass, receiver, smtp_host, smtp_port)
-		}
+		wg.Add(1)
+		go func(i int, city t.ConfigCity) {
+			defer wg.Done()
+			res, err := getMeteoData(config.Cities[i].Coordinates, config.Parameters, config.ForecastDays)
+			if err != nil {
+				log.Fatal(err)
+			}
+			writeDataToDb(res, db_port, db_host, db_database, db_user, db_pass, city.Name)
+			if city.Email == true {
+				emailData := createEmailData(res)
+				writeEmail(emailData, city.Name, email_user, email_sender, email_sender_pass, receiver, smtp_host, smtp_port)
+			}
+		}(i, city)
 	}
-
+	wg.Wait()
 }
