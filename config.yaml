@@ -20,4 +20,5 @@ parameters:
   - cloudcover
   - windspeed_10m
   - winddirection_10m
+  - weathercode
 forecast_days: 16

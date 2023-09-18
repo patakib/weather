@@ -26,7 +26,13 @@ type ConfigCity struct {
 
 type Response struct {
 	Hourly HourlyWeather `json:"hourly"`
+	Daily  DailyWeather  `json:"daily"`
 	City   string
+}
+type DailyWeather struct {
+	Time    []string `json:"time"`
+	Sunrise []string `json:"sunrise"`
+	Sunset  []string `json:"sunset"`
 }
 type HourlyWeather struct {
 	Time          []string  `json:"time"`
@@ -38,6 +44,7 @@ type HourlyWeather struct {
 	CloudCover    []int8    `json:"cloudcover"`
 	Windspeed_10m []float32 `json:"windspeed_10m"`
 	Winddir_10m   []int8    `json:"winddirection_10m"`
+	WeatherCode   []int8    `json:"weathercode"`
 }
 
 func readConfig(file string) (Config, error) {
@@ -55,7 +62,7 @@ func readConfig(file string) (Config, error) {
 
 func getMeteoData(coordinates []float64, parameters []string, forecastDays int8) (Response, error) {
 	urlStart := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%v&longitude=%v&hourly=", coordinates[0], coordinates[1])
-	urlEnd := fmt.Sprintf("&forecast_days=%v", forecastDays)
+	urlEnd := fmt.Sprintf("&daily=sunrise,sunset&timezone=auto&forecast_days=%v", forecastDays)
 	urlMiddlePart := ""
 	for index, p := range parameters {
 		if index < len(parameters)-1 {
@@ -90,8 +97,8 @@ func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass
 	if err != nil {
 		log.Fatal(err)
 	}
-	createTable := `
-		CREATE TABLE IF NOT EXISTS weather (
+	createTableHourly := `
+		CREATE TABLE IF NOT EXISTS weather_hourly (
 			id SERIAL PRIMARY KEY, 
 			city VARCHAR(50),
 			reg_date DATE,
@@ -103,14 +110,27 @@ func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass
 			snow DECIMAL, 
 			cloud_cover INTEGER, 
 			windspeed_10m DECIMAL, 
-			winddir_10m INTEGER
+			winddir_10m INTEGER,
+			weather_code INTEGER
 		);`
-	if _, err := db.Exec(createTable); err != nil {
+	if _, err := db.Exec(createTableHourly); err != nil {
+		log.Fatal(err)
+	}
+	createTableDaily := `
+		CREATE TABLE IF NOT EXISTS weather_daily (
+			id SERIAL PRIMARY KEY,
+			city VARCHAR(50),
+			reg_date DATE,
+			date DATE,
+			sunrise TIMESTAMP,
+			sunset TIMESTAMP
+		);`
+	if _, err := db.Exec(createTableDaily); err != nil {
 		log.Fatal(err)
 	}
 	for index, _ := range response.Hourly.Time {
-		insertInto := `
-			INSERT INTO weather (
+		insertIntoHourly := `
+			INSERT INTO weather_hourly (
 				city,
 				reg_date,
 				date,
@@ -121,10 +141,11 @@ func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass
 				snow,
 				cloud_cover,
 				windspeed_10m,
-				winddir_10m
+				winddir_10m,
+				weather_code
 			)
-			VALUES ($1,CURRENT_DATE,$2,$3,$4,$5,$6,$7,$8,$9,$10);`
-		if _, err := db.Exec(insertInto,
+			VALUES ($1,CURRENT_DATE,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11);`
+		if _, err := db.Exec(insertIntoHourly,
 			city,
 			response.Hourly.Time[index],
 			response.Hourly.Temp_2m[index],
@@ -135,6 +156,26 @@ func writeDataToDb(response Response, pgPort, pgHost, pgDatabase, pgUser, pgPass
 			response.Hourly.CloudCover[index],
 			response.Hourly.Windspeed_10m[index],
 			response.Hourly.Winddir_10m[index],
+			response.Hourly.WeatherCode[index],
+		); err != nil {
+			log.Fatal(err)
+		}
+	}
+	for index, _ := range response.Daily.Time {
+		insertIntoDaily := `
+			INSERT INTO weather_daily (
+				city,
+				reg_date,
+				date,
+				sunrise,
+				sunset
+			)
+			VALUES ($1,CURRENT_DATE,$2,$3,$4);`
+		if _, err := db.Exec(insertIntoDaily,
+			city,
+			response.Daily.Time[index],
+			response.Daily.Sunrise[index],
+			response.Daily.Sunset[index],
 		); err != nil {
 			log.Fatal(err)
 		}
