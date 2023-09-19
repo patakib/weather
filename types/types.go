@@ -3,7 +3,7 @@ package types
 type Config struct {
 	Cities       []ConfigCity `yaml:"cities"`
 	Parameters   []string     `yaml:"parameters"`
-	ForecastDays int8         `yaml:"forecast_days"`
+	ForecastDays int          `yaml:"forecast_days"`
 }
 type ConfigCity struct {
 	Name        string    `yaml:"name"`
@@ -14,7 +14,7 @@ type ConfigCity struct {
 type EmailData struct {
 	Temperature   map[int]float32
 	Precipitation map[int][]float32
-	WeatherCode   map[int]string
+	WeatherCode   map[int]int
 	Sunrise       string
 	Sunset        string
 }
@@ -32,12 +32,12 @@ type DailyWeather struct {
 type HourlyWeather struct {
 	Time          []string  `json:"time"`
 	Temp_2m       []float32 `json:"temperature_2m"`
-	PrecProb      []int8    `json:"precipitation_probability"`
+	PrecProb      []int     `json:"precipitation_probability"`
 	Prec          []float32 `json:"precipitation"`
 	Rain          []float32 `json:"rain"`
 	Snow          []float32 `json:"snowfall"`
-	CloudCover    []int8    `json:"cloudcover"`
+	CloudCover    []int     `json:"cloudcover"`
 	Windspeed_10m []float32 `json:"windspeed_10m"`
-	Winddir_10m   []int8    `json:"winddirection_10m"`
-	WeatherCode   []int8    `json:"weathercode"`
+	Winddir_10m   []int     `json:"winddirection_10m"`
+	WeatherCode   []int     `json:"weathercode"`
 }

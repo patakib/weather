@@ -34,7 +34,7 @@ func readConfig(file string) (t.Config, error) {
 	return config, err
 }
 
-func getMeteoData(coordinates []float64, parameters []string, forecastDays int8) (t.Response, error) {
+func getMeteoData(coordinates []float64, parameters []string, forecastDays int) (t.Response, error) {
 	// call open-meteo api - based on config -, and returns a response struct
 	urlStart := fmt.Sprintf("https://api.open-meteo.com/v1/forecast?latitude=%v&longitude=%v&hourly=", coordinates[0], coordinates[1])
 	urlEnd := fmt.Sprintf("&daily=sunrise,sunset&timezone=auto&forecast_days=%v", forecastDays)
@@ -174,7 +174,7 @@ func createEmailData(response t.Response) t.EmailData {
 	var emailData t.EmailData
 	emailData.Temperature = make(map[int]float32)
 	emailData.Precipitation = make(map[int][]float32)
-	emailData.WeatherCode = make(map[int]string)
+	emailData.WeatherCode = make(map[int]int)
 	for index, _ := range response.Hourly.Time[:24] {
 		actualTime, err := time.Parse("2006-01-02T15:04", response.Hourly.Time[index])
 		if err != nil {
@@ -182,13 +182,9 @@ func createEmailData(response t.Response) t.EmailData {
 		}
 		actualHour := actualTime.Hour()
 		emailData.Temperature[actualHour] = response.Hourly.Temp_2m[index]
-		if response.Hourly.Prec[index] > 0 {
-			emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], response.Hourly.Prec[index])
-			emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], float32(response.Hourly.PrecProb[index]))
-		}
-		if response.Hourly.WeatherCode[index] == 95 || response.Hourly.WeatherCode[index] == 96 || response.Hourly.WeatherCode[index] == 99 {
-			emailData.WeatherCode[actualHour] = "VIHAR VÁRHATÓ!"
-		}
+		emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], response.Hourly.Prec[index])
+		emailData.Precipitation[actualHour] = append(emailData.Precipitation[actualHour], float32(response.Hourly.PrecProb[index]))
+		emailData.WeatherCode[actualHour] = response.Hourly.WeatherCode[index]
 	}
 	return emailData
 }
@@ -206,13 +202,13 @@ func writeEmail(emailData t.EmailData, city, user, sender, pass, receiver, host,
 		tempString = tempString + fmt.Sprintf("%v ora - %v fok\n", indexTemp, emailData.Temperature[indexTemp])
 	}
 	for indexPrec, _ := range sortedPrec {
-		if len(emailData.Precipitation[indexPrec]) > 0 {
+		if emailData.Precipitation[indexPrec][0] > 0 {
 			precString = precString + fmt.Sprintf("%v ora - %v mm - %v valoszinuseg\n", indexPrec, emailData.Precipitation[indexPrec][0], emailData.Precipitation[indexPrec][1])
 		}
 	}
 	for indexWeatherCode, _ := range sortedWeatherCode {
-		if len(emailData.WeatherCode) > 0 {
-			weatherCodeString = weatherCodeString + fmt.Sprintf("%v ora - %v\n", indexWeatherCode, emailData.WeatherCode[indexWeatherCode])
+		if emailData.WeatherCode[indexWeatherCode] == 99 || emailData.WeatherCode[indexWeatherCode] == 95 || emailData.WeatherCode[indexWeatherCode] == 96 {
+			weatherCodeString = weatherCodeString + fmt.Sprintf("%v ora - VIHAR VARHATO!\n", indexWeatherCode)
 		}
 	}
 	msgString := fmt.Sprintf(
